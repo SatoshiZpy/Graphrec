@@ -30,6 +30,7 @@ from torch.backends import cudnn
 from utils import collate_fn
 from model import GraphRec
 from dataloader import GRDataset
+import pandas as pd
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset_path', default='datasets/Yelp/', help='dataset directory path: datasets/Ciao/Epinions')
@@ -40,6 +41,7 @@ parser.add_argument('--seed', type=int, default=1234, help='the number of random
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate')  # [0.001, 0.0005, 0.0001]
 parser.add_argument('--lr_dc', type=float, default=0.5, help='learning rate decay rate')
 parser.add_argument('--lr_dc_step', type=int, default=30, help='the number of steps after which the learning rate decay')
+parser.add_argument('--test_prop', default=0.1, help='the proportion of data used for test')
 parser.add_argument('--test', action='store_true', help='test')
 args = parser.parse_args()
 print(args)
@@ -63,9 +65,7 @@ if not os.path.exists(fn):
 def main():
     print('Loading data...')
     with open(args.dataset_path + 'dataset_filter5.pkl', 'rb') as f:
-        train_set = pickle.load(f)
-        valid_set = pickle.load(f)
-        test_set = pickle.load(f)
+        data = pickle.load(f)
 
 
 
@@ -78,17 +78,25 @@ def main():
         # print(pickle.load(f))
         (user_count, item_count, rate_count) = pickle.load(f)
 
+    review = pd.read_csv("datasets/Yelp/restaurant.csv")
+    length = len(review)
+    all = list(range(length))
+    review_list = review["review"].tolist()
 
-
-    
-    train_data = GRDataset(train_set, u_items_list,  u_users_list, u_users_items_list, i_users_list)
-    valid_data = GRDataset(valid_set, u_items_list,  u_users_list, u_users_items_list, i_users_list)
-    test_data = GRDataset(test_set, u_items_list, u_users_list,  u_users_items_list, i_users_list)
+    num_test = int(length * args.test_prop)
+    random.shuffle(all)
+    test_list = all[: num_test]
+    print(num_test)
+    valid_list = all[num_test:2*num_test]
+    train_list = all[2*num_test:]
+    train_data = GRDataset(review, u_items_list,  u_users_list, u_users_items_list, i_users_list, train_list)
+    valid_data = GRDataset(review, u_items_list,  u_users_list, u_users_items_list, i_users_list, valid_list)
+    test_data = GRDataset(review, u_items_list, u_users_list,  u_users_items_list, i_users_list, test_list)
     train_loader = DataLoader(train_data, batch_size = args.batch_size, shuffle = True, collate_fn = collate_fn)
     valid_loader = DataLoader(valid_data, batch_size = args.batch_size, shuffle = False, collate_fn = collate_fn)
     test_loader = DataLoader(test_data, batch_size = args.batch_size, shuffle = False, collate_fn = collate_fn)
 
-    model = GraphRec(user_count+1, item_count+1, rate_count+1, args.embed_dim).to(device)
+    model = GraphRec(user_count+1, item_count+1, rate_count+1, review_list, args.embed_dim).to(device)
 
     if args.test:
         print('Load checkpoint and testing...')
@@ -142,9 +150,9 @@ def trainForEpoch(train_loader, model, optimizer, epoch, num_epochs, criterion, 
     model.train()
 
     sum_epoch_loss = 0
-
+   
     start = time.time()
-    for i, (uids, iids, labels, u_items, u_users, u_users_items, i_users) in tqdm(enumerate(train_loader), total=len(train_loader)):
+    for i, (uids, iids, labels, u_items, u_users, u_users_items, i_users, rid) in tqdm(enumerate(train_loader), total=len(train_loader)):
         uids = uids.to(device)
         iids = iids.to(device)
         labels = labels.to(device)
@@ -152,10 +160,10 @@ def trainForEpoch(train_loader, model, optimizer, epoch, num_epochs, criterion, 
         u_users = u_users.to(device)
         u_users_items = u_users_items.to(device)
         i_users = i_users.to(device)
+        rid = rid.to(device)
         
         optimizer.zero_grad()
-        outputs = model(uids, iids, u_items, u_users, u_users_items, i_users)
-
+        outputs = model(uids, iids, u_items, u_users, u_users_items, i_users, rid)
         loss = criterion(outputs, labels.unsqueeze(1))
         loss.backward()
         optimizer.step() 
@@ -177,7 +185,7 @@ def validate(valid_loader, model):
     model.eval()
     errors = []
     with torch.no_grad():
-        for uids, iids, labels, u_items, u_users, u_users_items, i_users in tqdm(valid_loader):
+        for uids, iids, labels, u_items, u_users, u_users_items, i_users, rid in tqdm(valid_loader):
             uids = uids.to(device)
             iids = iids.to(device)
             labels = labels.to(device)
@@ -185,8 +193,9 @@ def validate(valid_loader, model):
             u_users = u_users.to(device)
             u_users_items = u_users_items.to(device)
             i_users = i_users.to(device)
+            rid = rid.to(device)
 
-            preds = model(uids, iids, u_items, u_users, u_users_items, i_users)
+            preds = model(uids, iids, u_items, u_users, u_users_items, i_users, rid)
             error = torch.abs(preds.squeeze(1) - labels)
             errors.extend(error.data.cpu().numpy().tolist())
     
