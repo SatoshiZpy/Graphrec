@@ -37,6 +37,7 @@ class _UserModel(nn.Module):
         self.item_emb = item_emb
         self.rate_emb = rate_emb
         self.emb_dim = emb_dim
+        print(rate_emb)
 
         self.w1 = nn.Linear(self.emb_dim, self.emb_dim)
         self.w2 = nn.Linear(self.emb_dim, self.emb_dim)
@@ -131,13 +132,13 @@ class _UserModel(nn.Module):
 class _ItemModel(nn.Module):
     '''Item modeling to learn item latent factors.
     '''
-    def __init__(self, emb_dim, user_emb, item_emb, txt_emb):
+    def __init__(self, emb_dim, user_emb, item_emb, rate_emb):
         super(_ItemModel, self).__init__()
         self.emb_dim = emb_dim
         self.user_emb = user_emb
         self.item_emb = item_emb
-        # self.rate_emb = rate_emb
-        self.txt_emb = txt_emb
+        self.rate_emb = rate_emb
+        # self.txt_emb = txt_emb
 
         self.w1 = nn.Linear(self.emb_dim, self.emb_dim)
         self.w2 = nn.Linear(self.emb_dim, self.emb_dim)
@@ -202,7 +203,7 @@ class GraphRec(nn.Module):
         emb_dim: the dimension of user and item embedding (default = 64).
 
     '''
-    def __init__(self, num_users, num_items, num_rate_levels, emb_dim = 64):
+    def __init__(self, num_users, num_items, num_rate_levels, review_list, emb_dim = 64):
         super(GraphRec, self).__init__()
         self.num_users = num_users
         self.num_items = num_items
@@ -211,7 +212,7 @@ class GraphRec(nn.Module):
         self.user_emb = nn.Embedding(self.num_users, self.emb_dim, padding_idx = 0)
         self.item_emb = nn.Embedding(self.num_items, self.emb_dim, padding_idx = 0)
         self.rate_emb = nn.Embedding(self.num_rate_levels, self.emb_dim, padding_idx = 0)
-        self.txt_emb = nn.Embedding(self.num_reviews, 768, padding_idx=0)
+        self.encoder = nn.Embedding(len(review_list), 768)
 
         self.user_model = _UserModel(self.emb_dim, self.user_emb, self.item_emb, self.rate_emb)
 
@@ -220,7 +221,7 @@ class GraphRec(nn.Module):
         
         self.rate_pred = nn.Sequential(
             nn.Dropout(p=0.5),
-            nn.Linear(2* self.emb_dim, self.emb_dim, bias = True),
+            nn.Linear(2* self.emb_dim + 768, self.emb_dim, bias = True),
             nn.ReLU(),
             nn.Dropout(p=0.5),
             nn.Linear(self.emb_dim, self.emb_dim // 4),
@@ -233,7 +234,7 @@ class GraphRec(nn.Module):
 
 
 
-    def forward(self, uids, iids, u_item_pad, u_user_pad, u_user_item_pad, i_user_pad):
+    def forward(self, uids, iids, u_item_pad, u_user_pad, u_user_item_pad, i_user_pad, review):
         '''
         Args:
             uids: the user id sequences.
@@ -257,7 +258,7 @@ class GraphRec(nn.Module):
 
         h = self.user_model(uids, u_item_pad, u_user_pad, u_user_item_pad)
         z = self.item_model(iids, i_user_pad)
-
-        r_ij = self.rate_pred(torch.cat([h,z], dim = 1))
+        t = self.encoder(review)
+        r_ij = self.rate_pred(torch.cat([h,z,t], dim = 1))
 
         return r_ij
